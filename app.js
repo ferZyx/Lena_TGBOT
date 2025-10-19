@@ -24,7 +24,7 @@ bot.on('message', async (msg) => {
     if (msg.text === '/start'){
         return await bot.sendMessage(msg.chat.id, 'Хей. Пиши, что хочешь, я постараюсь ответить быстро');
     }
-    if (msg.chat.id !== lena_log_chanel_id) {
+    if (String(msg.chat.id) !== lena_log_chanel_id) {
         try {
             await bot.sendMessage(lena_log_chanel_id, `Поступило сообщение на бота для СВЯЗИ!\nID: ${msg.chat.id}`);
             await bot.forwardMessage(lena_log_chanel_id, msg.chat.id, msg.message_id);
