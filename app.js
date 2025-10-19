@@ -1,14 +1,24 @@
-import TelegramBot from 'node-telegram-bot-api'
-import "dotenv/config.js"
+import TelegramBot from 'node-telegram-bot-api';
+import express from 'express';
+import cors from 'cors';
+import config from './config.js';
+import router from './router.js';
+import botHealthMonitor from './utils/botHealthMonitor.js';
+import webhookTester from './utils/webhookTester.js';
 
-const token = process.env.TG_TOKEN;
-const bot = new TelegramBot(token, {
-    polling: {
-        autoStart: true
-    }
-});
+// Initialize bot based on mode (polling or webhook)
+let botOptions = {};
+if (config.BOT_MODE === 'webhook') {
+    botOptions = { polling: false, webHook: false };
+    console.log('Bot will run in WEBHOOK mode. Webhook URL will be set after server starts.');
+} else {
+    botOptions = { polling: { autoStart: true } };
+    console.log('Bot is running in POLLING mode.');
+}
 
-const lena_log_chanel_id = -1001891047764
+export const bot = new TelegramBot(config.TG_TOKEN, botOptions);
+
+const lena_log_chanel_id = config.LOG_CHANEL_ID;
 
 bot.on('message', async (msg) => {
     if (msg.text === '/start'){
@@ -46,6 +56,92 @@ bot.on('message', async (msg) => {
     }
 });
 
+// Bot error handlers
 bot.on('polling_error', (error) => {
-    console.error(error);
+    console.error('Polling error occurred!', error);
 });
+
+bot.on('webhook_error', (error) => {
+    console.error('Webhook error occurred!', error);
+});
+
+// Track bot activity for health monitoring
+bot.on('message', () => botHealthMonitor.updateActivity());
+bot.on('callback_query', () => botHealthMonitor.updateActivity());
+
+// Express server setup
+const app = express();
+app.use(cors());
+app.use(express.json());
+app.use('/bot', router);
+
+const port = config.WEBHOOK_PORT;
+const server = app.listen(port, async () => {
+    console.log(`Lena bot express server started at port ${port}.`);
+
+    // Set webhook if in webhook mode
+    if (config.BOT_MODE === 'webhook') {
+        try {
+            const webhookUrl = `${config.WEBHOOK_DOMAIN}${config.WEBHOOK_PATH}`;
+            await bot.setWebHook(webhookUrl);
+            console.log(`Webhook set successfully: ${webhookUrl}`);
+        } catch (e) {
+            console.error('Failed to set webhook!', e);
+        }
+    }
+
+    // Test webhook connectivity (works in both polling and webhook modes)
+    // Небольшая задержка чтобы сервер точно был готов
+    setTimeout(async () => {
+        try {
+            await webhookTester.testOnStartup();
+
+            // В режиме polling проверяем готовность к миграции
+            if (config.BOT_MODE === 'polling' && config.WEBHOOK_DOMAIN) {
+                await webhookTester.checkMigrationReadiness();
+            }
+        } catch (e) {
+            console.error('Error during webhook testing', e);
+        }
+    }, 2000); // 2 секунды задержка
+});
+
+// Node.js process error handlers
+process.on('uncaughtException', async (error) => {
+    console.error('Uncaught Exception!', error);
+});
+
+process.on('unhandledRejection', async (reason, promise) => {
+    console.error('Unhandled Rejection!', reason);
+});
+
+// Graceful shutdown
+const gracefulShutdown = async (signal) => {
+    console.log(`${signal} received. Starting graceful shutdown...`);
+
+    try {
+        // Stop accepting new requests
+        server.close(() => {
+            console.log('HTTP server closed');
+        });
+
+        // Remove webhook if in webhook mode
+        if (config.BOT_MODE === 'webhook') {
+            await bot.deleteWebHook();
+            console.log('Webhook removed');
+        } else {
+            // Stop polling
+            await bot.stopPolling();
+            console.log('Polling stopped');
+        }
+
+        console.log('Graceful shutdown completed');
+        process.exit(0);
+    } catch (e) {
+        console.error('Error during graceful shutdown', e);
+        process.exit(1);
+    }
+};
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));

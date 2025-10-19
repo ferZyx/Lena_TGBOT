@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/sorok/my_js_projects/**)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
