@@ -11,6 +11,9 @@ const config = {
     WEBHOOK_DOMAIN: process.env.WEBHOOK_DOMAIN,
     WEBHOOK_PATH: process.env.WEBHOOK_PATH || '/bot/webhook',
     WEBHOOK_PORT: process.env.WEBHOOK_PORT || '5002',
+
+    // Debug mode
+    DEBUG: process.env.DEBUG === 'true' || false,
 };
 
 // Validate required variables

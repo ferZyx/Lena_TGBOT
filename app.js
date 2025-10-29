@@ -5,6 +5,7 @@ import config from './config.js';
 import router from './router.js';
 import botHealthMonitor from './utils/botHealthMonitor.js';
 import webhookTester from './utils/webhookTester.js';
+import WebhookRetryManager from './utils/webhookRetry.js';
 
 // Initialize bot based on mode (polling or webhook)
 let botOptions = {};
@@ -17,6 +18,12 @@ if (config.BOT_MODE === 'webhook') {
 }
 
 export const bot = new TelegramBot(config.TG_TOKEN, botOptions);
+
+// Initialize webhook retry manager if in webhook mode
+let webhookRetryManager = null;
+if (config.BOT_MODE === 'webhook') {
+    webhookRetryManager = new WebhookRetryManager(bot);
+}
 
 const lena_log_chanel_id = config.LOG_CHANEL_ID;
 
@@ -79,15 +86,15 @@ const port = config.WEBHOOK_PORT;
 const server = app.listen(port, async () => {
     console.log(`Lena bot express server started at port ${port}.`);
 
-    // Set webhook if in webhook mode
-    if (config.BOT_MODE === 'webhook') {
-        try {
-            const webhookUrl = `${config.WEBHOOK_DOMAIN}${config.WEBHOOK_PATH}`;
-            await bot.setWebHook(webhookUrl);
-            console.log(`Webhook set successfully: ${webhookUrl}`);
-        } catch (e) {
-            console.error('Failed to set webhook!', e);
-        }
+    // Set webhook if in webhook mode with automatic retry
+    if (config.BOT_MODE === 'webhook' && webhookRetryManager) {
+        const webhookUrl = `${config.WEBHOOK_DOMAIN}${config.WEBHOOK_PATH}`;
+        await webhookRetryManager.setWebhookWithRetry(webhookUrl);
+
+        // Setup periodic webhook health monitoring (every 5 minutes)
+        setInterval(async () => {
+            await webhookRetryManager.monitorWebhookHealth();
+        }, 5 * 60 * 1000);
     }
 
     // Test webhook connectivity (works in both polling and webhook modes)
@@ -124,6 +131,12 @@ const gracefulShutdown = async (signal) => {
         server.close(() => {
             console.log('HTTP server closed');
         });
+
+        // Cancel any pending webhook retries
+        if (webhookRetryManager) {
+            webhookRetryManager.cancelRetry();
+            console.log('Webhook retry manager stopped');
+        }
 
         // Remove webhook if in webhook mode
         if (config.BOT_MODE === 'webhook') {
